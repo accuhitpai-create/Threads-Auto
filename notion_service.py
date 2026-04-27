@@ -91,24 +91,28 @@ class NotionService:
         comment2: str
     ):
         """將 AI 生成的貼文內容寫回 Notion，並設為待審核"""
-        # 1. 更新屬性欄位（供自動化流程讀取）
-        self.client.pages.update(
-            page_id=page_id,
-            properties={
-                NOTION_PROPS["main_post"]: {
-                    "rich_text": [{"text": {"content": main_post[:2000]}}]
-                },
-                NOTION_PROPS["comment1"]: {
-                    "rich_text": [{"text": {"content": comment1[:2000]}}]
-                },
-                NOTION_PROPS["comment2"]: {
-                    "rich_text": [{"text": {"content": comment2[:2000]}}]
-                },
-                NOTION_PROPS["status"]: {
-                    "select": {"name": STATUS_PENDING}
-                },
+        # 取得該頁面實際存在的屬性欄位
+        page_info = self.client.pages.retrieve(page_id=page_id)
+        existing_props = set(page_info["properties"].keys())
+
+        props = {
+            NOTION_PROPS["main_post"]: {
+                "rich_text": [{"text": {"content": main_post[:2000]}}]
+            },
+            NOTION_PROPS["status"]: {
+                "select": {"name": STATUS_PENDING}
+            },
+        }
+        if NOTION_PROPS["comment1"] in existing_props:
+            props[NOTION_PROPS["comment1"]] = {
+                "rich_text": [{"text": {"content": comment1[:2000]}}]
             }
-        )
+        if NOTION_PROPS["comment2"] in existing_props:
+            props[NOTION_PROPS["comment2"]] = {
+                "rich_text": [{"text": {"content": comment2[:2000]}}]
+            }
+
+        self.client.pages.update(page_id=page_id, properties=props)
         # 2. 把內容也寫進頁面內文（方便審稿）
         self._write_page_body(page_id, main_post, comment1, comment2)
 
