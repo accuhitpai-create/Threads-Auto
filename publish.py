@@ -7,7 +7,8 @@ publish.py — 每 15 分鐘執行
 3. 發布成功後將 Notion 狀態更新為「已發布」
 
 crontab 設定：
-*/15 * * * * cd /path/to/Auto\ Threads && python publish.py >> logs/publish.log 2>&1
+0 10 * * * cd /path/to/Auto\ Threads && python publish.py >> logs/publish.log 2>&1
+30 19 * * * cd /path/to/Auto\ Threads && python publish.py >> logs/publish.log 2>&1
 """
 
 import sys
