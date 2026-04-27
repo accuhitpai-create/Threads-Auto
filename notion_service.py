@@ -1,4 +1,6 @@
-from datetime import date, datetime
+from datetime import datetime, timezone, timedelta
+
+TWN = timezone(timedelta(hours=8))
 from notion_client import Client
 from config import (
     NOTION_TOKEN, NOTION_DATABASE_ID, NOTION_PROPS,
@@ -17,8 +19,9 @@ class NotionService:
 
     def get_approved_posts(self) -> list[dict]:
         """取得核准發布、今天預定發布、時間已到的貼文"""
-        today = date.today().isoformat()
-        now_time = datetime.now().strftime("%H:%M")
+        now_twn = datetime.now(TWN)
+        today = now_twn.date().isoformat()
+        now_time = now_twn.strftime("%H:%M")
 
         response = self.client.databases.query(
             database_id=self.db_id,

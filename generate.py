@@ -13,9 +13,11 @@ crontab 設定：
 
 import sys
 import random
-from datetime import date
+from datetime import datetime, timezone, timedelta
 from notion_service import NotionService
 from claude_service import ClaudeService
+
+TWN = timezone(timedelta(hours=8))
 
 # 內容類型比例（60/25/10/5）
 CONTENT_TYPE_WEIGHTS = [
@@ -50,7 +52,7 @@ def run():
     notion = NotionService()
     claude = ClaudeService()
 
-    today = date.today().isoformat()
+    today = datetime.now(TWN).date().isoformat()
     print(f"\n{'='*50}")
     print(f"[generate] 執行日期：{today}")
     print(f"{'='*50}")

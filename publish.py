@@ -12,16 +12,18 @@ crontab 設定：
 """
 
 import sys
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from notion_service import NotionService
 from threads_service import ThreadsService
+
+TWN = timezone(timedelta(hours=8))
 
 
 def run():
     notion = NotionService()
     threads = ThreadsService()
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = datetime.now(TWN).strftime("%Y-%m-%d %H:%M")
     print(f"\n[publish] 執行時間：{now}")
 
     approved_posts = notion.get_approved_posts()
