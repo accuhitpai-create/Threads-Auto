@@ -1,7 +1,7 @@
 from google import genai
 from google.genai import types
 from config import GOOGLE_API_KEY, GEMINI_MODEL
-from prompts import SYSTEM_PROMPT, get_prompt
+from prompts import SYSTEM_PROMPT, get_auto_prompt, get_prompt
 
 
 class ClaudeService:
@@ -12,14 +12,18 @@ class ClaudeService:
         self,
         pillar: str,
         content_type: str,
-        title: str,
+        existing_title: str = None,
         notes: str = ""
-    ) -> tuple[str, str, str]:
+    ) -> tuple[str, str, str, str]:
         """
-        生成貼文三個區塊：主文、留言1、留言2
-        回傳 (main_post, comment1, comment2)
+        生成標題 + 貼文三個區塊
+        回傳 (title, main_post, comment1, comment2)
+        existing_title: 修改模式時傳入，AI 只改內容不改標題
         """
-        user_prompt = get_prompt(pillar, content_type, title, notes)
+        if existing_title:
+            user_prompt = get_prompt(pillar, content_type, existing_title, notes)
+        else:
+            user_prompt = get_auto_prompt(pillar, content_type)
 
         response = self.client.models.generate_content(
             model=GEMINI_MODEL,
@@ -37,10 +41,16 @@ class ClaudeService:
             print(response.text)
             print("----- END RAW -----\n")
 
-        return self._parse_output(response.text)
+        title, main_post, comment1, comment2 = self._parse_output(response.text)
 
-    def _parse_output(self, raw: str) -> tuple[str, str, str]:
-        """解析輸出的三個區塊"""
+        if existing_title and not title:
+            title = existing_title
+
+        return title, main_post, comment1, comment2
+
+    def _parse_output(self, raw: str) -> tuple[str, str, str, str]:
+        """解析輸出的四個區塊"""
+        title = ""
         main_post = ""
         comment1 = ""
         comment2 = ""
@@ -49,7 +59,11 @@ class ClaudeService:
 
         for i, section in enumerate(sections):
             section = section.strip()
-            if section.startswith("主文==="):
+            if section.startswith("標題==="):
+                title = section.replace("標題===", "").strip()
+            elif section == "標題" and i + 1 < len(sections):
+                title = sections[i + 1].strip()
+            elif section.startswith("主文==="):
                 main_post = section.replace("主文===", "").strip()
             elif section == "主文" and i + 1 < len(sections):
                 main_post = sections[i + 1].strip()
@@ -68,4 +82,4 @@ class ClaudeService:
         if comment1.strip() in ("無", ""):
             comment1 = ""
 
-        return main_post, comment1, comment2
+        return title, main_post, comment1, comment2

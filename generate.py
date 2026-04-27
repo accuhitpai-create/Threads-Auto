@@ -2,9 +2,9 @@
 generate.py — 每天 07:00 執行
 
 功能：
-1. 從 Notion 取得今天預定發布、尚未生成的貼文
-2. 呼叫 Claude API 生成主文 / 留言1 / 留言2
-3. 寫回 Notion，狀態設為「待審核」
+1. 依照支柱比例（60/25/10/5）隨機選出兩組「支柱 + 內容類型」
+2. 呼叫 Gemini AI 自動生成標題 + 主文 / 留言1 / 留言2
+3. 在 Notion 建立兩篇新文章（發布時間分別為 10:00 / 19:30），狀態設為「待審核」
 4. 同時處理「需修改」的貼文（備註不為空）
 
 crontab 設定：
@@ -12,9 +12,38 @@ crontab 設定：
 """
 
 import sys
+import random
 from datetime import date
 from notion_service import NotionService
 from claude_service import ClaudeService
+
+# 內容類型比例（60/25/10/5）
+CONTENT_TYPE_WEIGHTS = [
+    ("純知識",  60),
+    ("工具評測", 25),
+    ("軟性露出", 10),
+    ("硬推廣",   5),
+]
+
+# 各內容類型可用的支柱
+PILLAR_BY_TYPE = {
+    "純知識":  ["生產力提升", "數位工具應用", "會員經營", "AI提示詞", "數位轉型", "自動化行銷"],
+    "工具評測": ["生產力提升", "數位工具應用"],
+    "軟性露出": ["會員經營", "自動化行銷"],
+    "硬推廣":  ["綜合"],
+}
+
+PUBLISH_TIMES = ["10:00", "19:30"]
+
+
+def pick_combination(exclude_pillar=None):
+    types, weights = zip(*CONTENT_TYPE_WEIGHTS)
+    content_type = random.choices(types, weights=weights, k=1)[0]
+    pillars = [p for p in PILLAR_BY_TYPE[content_type] if p != exclude_pillar]
+    if not pillars:
+        pillars = PILLAR_BY_TYPE[content_type]
+    pillar = random.choice(pillars)
+    return pillar, content_type
 
 
 def run():
@@ -26,28 +55,31 @@ def run():
     print(f"[generate] 執行日期：{today}")
     print(f"{'='*50}")
 
-    # ── 1. 生成今天的新貼文 ──────────────────────────────────
-    drafts = notion.get_todays_drafts()
-    print(f"\n[generate] 找到 {len(drafts)} 篇待生成貼文")
-
-    for post in drafts:
-        print(f"\n  處理：{post['title']} ({post['pillar']} / {post['content_type']})")
+    # ── 1. 自動生成今天兩篇 ──────────────────────────────────
+    first_pillar = None
+    for i, publish_time in enumerate(PUBLISH_TIMES):
+        pillar, content_type = pick_combination(exclude_pillar=first_pillar)
+        first_pillar = pillar
+        print(f"\n  [{i+1}/2] {pillar} / {content_type} → {publish_time}")
         try:
-            main_post, comment1, comment2 = claude.generate_post(
-                pillar=post["pillar"],
-                content_type=post["content_type"],
-                title=post["title"],
+            title, main_post, comment1, comment2 = claude.generate_post(
+                pillar=pillar,
+                content_type=content_type,
             )
-            notion.update_generated_content(
-                page_id=post["page_id"],
+            notion.create_post(
+                title=title,
+                pillar=pillar,
+                content_type=content_type,
+                publish_date=today,
+                publish_time=publish_time,
                 main_post=main_post,
                 comment1=comment1,
                 comment2=comment2,
             )
-            print(f"  ✓ 生成完成，已寫入 Notion（狀態：待審核）")
-            _preview(main_post, comment1, comment2)
+            print(f"  ✓ 標題：{title}")
+            print(f"  預覽：{main_post[:80].replace(chr(10), ' ')}...")
         except Exception as e:
-            print(f"  ✗ 生成失敗：{e}", file=sys.stderr)
+            print(f"  ✗ 失敗：{e}", file=sys.stderr)
 
     # ── 2. 重新生成「需修改」的貼文 ──────────────────────────
     revision_posts = notion.get_needs_revision_posts()
@@ -57,10 +89,10 @@ def run():
         print(f"\n  修改：{post['title']} | 備註：{post['notes']}")
         try:
             notion.clear_for_revision(post["page_id"])
-            main_post, comment1, comment2 = claude.generate_post(
+            _, main_post, comment1, comment2 = claude.generate_post(
                 pillar=post["pillar"],
                 content_type=post["content_type"],
-                title=post["title"],
+                existing_title=post["title"],
                 notes=post["notes"],
             )
             notion.update_generated_content(
@@ -69,21 +101,11 @@ def run():
                 comment1=comment1,
                 comment2=comment2,
             )
-            print(f"  ✓ 修改完成，已寫入 Notion（狀態：待審核）")
-            _preview(main_post, comment1, comment2)
+            print(f"  ✓ 修改完成")
         except Exception as e:
             print(f"  ✗ 修改失敗：{e}", file=sys.stderr)
 
     print(f"\n[generate] 完成\n")
-
-
-def _preview(main_post: str, comment1: str, comment2: str):
-    """在 log 裡印出貼文預覽（前 100 字）"""
-    preview = main_post[:100].replace("\n", " ")
-    print(f"  預覽：{preview}...")
-    if comment1:
-        print(f"  留言1：{comment1[:60].replace(chr(10), ' ')}...")
-    print(f"  留言2：{comment2[:80].replace(chr(10), ' ')}")
 
 
 if __name__ == "__main__":

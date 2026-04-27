@@ -10,28 +10,10 @@ class NotionService:
     def __init__(self):
         self.client = Client(auth=NOTION_TOKEN)
         self.db_id = NOTION_DATABASE_ID
+        db = self.client.databases.retrieve(database_id=self.db_id)
+        self._db_props = set(db["properties"].keys())
 
     # ── 讀取 ──────────────────────────────────────────────────
-
-    def get_todays_drafts(self) -> list[dict]:
-        """取得今天預定發布、主文尚未生成的貼文"""
-        today = date.today().isoformat()
-        response = self.client.databases.query(
-            database_id=self.db_id,
-            filter={
-                "and": [
-                    {
-                        "property": NOTION_PROPS["publish_date"],
-                        "date": {"equals": today}
-                    },
-                    {
-                        "property": NOTION_PROPS["main_post"],
-                        "rich_text": {"is_empty": True}
-                    }
-                ]
-            }
-        )
-        return [self._parse_page(p) for p in response.get("results", [])]
 
     def get_approved_posts(self) -> list[dict]:
         """取得核准發布、今天預定發布、時間已到的貼文"""
@@ -57,7 +39,6 @@ class NotionService:
         posts = []
         for page in response.get("results", []):
             parsed = self._parse_page(page)
-            # 檢查發布時間是否已到
             if parsed.get("publish_time", "99:99") <= now_time:
                 posts.append(parsed)
         return posts
@@ -83,6 +64,58 @@ class NotionService:
 
     # ── 寫入 ──────────────────────────────────────────────────
 
+    def create_post(
+        self,
+        title: str,
+        pillar: str,
+        content_type: str,
+        publish_date: str,
+        publish_time: str,
+        main_post: str,
+        comment1: str,
+        comment2: str,
+    ) -> str:
+        """在 Notion 建立新貼文頁面，回傳 page_id"""
+        properties = {
+            NOTION_PROPS["title"]: {
+                "title": [{"text": {"content": title}}]
+            },
+            NOTION_PROPS["pillar"]: {
+                "select": {"name": pillar}
+            },
+            NOTION_PROPS["content_type"]: {
+                "select": {"name": content_type}
+            },
+            NOTION_PROPS["publish_date"]: {
+                "date": {"start": publish_date}
+            },
+            NOTION_PROPS["publish_time"]: {
+                "select": {"name": publish_time}
+            },
+            NOTION_PROPS["main_post"]: {
+                "rich_text": [{"text": {"content": main_post[:2000]}}]
+            },
+            NOTION_PROPS["status"]: {
+                "select": {"name": STATUS_PENDING}
+            },
+        }
+        if NOTION_PROPS["comment1"] in self._db_props and comment1:
+            properties[NOTION_PROPS["comment1"]] = {
+                "rich_text": [{"text": {"content": comment1[:2000]}}]
+            }
+        if NOTION_PROPS["comment2"] in self._db_props and comment2:
+            properties[NOTION_PROPS["comment2"]] = {
+                "rich_text": [{"text": {"content": comment2[:2000]}}]
+            }
+
+        page = self.client.pages.create(
+            parent={"database_id": self.db_id},
+            properties=properties,
+        )
+        page_id = page["id"]
+        self._write_page_body(page_id, main_post, comment1, comment2)
+        return page_id
+
     def update_generated_content(
         self,
         page_id: str,
@@ -91,10 +124,6 @@ class NotionService:
         comment2: str
     ):
         """將 AI 生成的貼文內容寫回 Notion，並設為待審核"""
-        # 取得該頁面實際存在的屬性欄位
-        page_info = self.client.pages.retrieve(page_id=page_id)
-        existing_props = set(page_info["properties"].keys())
-
         props = {
             NOTION_PROPS["main_post"]: {
                 "rich_text": [{"text": {"content": main_post[:2000]}}]
@@ -103,24 +132,22 @@ class NotionService:
                 "select": {"name": STATUS_PENDING}
             },
         }
-        if NOTION_PROPS["comment1"] in existing_props:
+        if NOTION_PROPS["comment1"] in self._db_props:
             props[NOTION_PROPS["comment1"]] = {
                 "rich_text": [{"text": {"content": comment1[:2000]}}]
             }
-        if NOTION_PROPS["comment2"] in existing_props:
+        if NOTION_PROPS["comment2"] in self._db_props:
             props[NOTION_PROPS["comment2"]] = {
                 "rich_text": [{"text": {"content": comment2[:2000]}}]
             }
 
         self.client.pages.update(page_id=page_id, properties=props)
-        # 2. 把內容也寫進頁面內文（方便審稿）
         self._write_page_body(page_id, main_post, comment1, comment2)
 
     def _write_page_body(
         self, page_id: str, main_post: str, comment1: str, comment2: str
     ):
         """在 Notion 頁面內文區顯示完整貼文（方便閱讀與編輯）"""
-        # 先清空舊的內文
         existing = self.client.blocks.children.list(block_id=page_id)
         for block in existing.get("results", []):
             try:
@@ -152,10 +179,8 @@ class NotionService:
         }
 
     def _paragraphs(self, text: str) -> list[dict]:
-        """把長文字切成多段 paragraph block（每段最多 1800 字）"""
         paragraphs = []
         for para in text.split("\n"):
-            # Notion 單一 block 限 2000 字
             chunk = para[:1800] if para else ""
             paragraphs.append({
                 "object": "block",
@@ -167,7 +192,6 @@ class NotionService:
         return paragraphs
 
     def mark_as_published(self, page_id: str):
-        """發布成功後更新狀態"""
         self.client.pages.update(
             page_id=page_id,
             properties={
@@ -179,20 +203,14 @@ class NotionService:
 
     def clear_for_revision(self, page_id: str):
         """清空主文讓 AI 重新生成（備註保留供 AI 參考）"""
-        self.client.pages.update(
-            page_id=page_id,
-            properties={
-                NOTION_PROPS["main_post"]: {
-                    "rich_text": []
-                },
-                NOTION_PROPS["comment1"]: {
-                    "rich_text": []
-                },
-                NOTION_PROPS["comment2"]: {
-                    "rich_text": []
-                },
-            }
-        )
+        props = {
+            NOTION_PROPS["main_post"]: {"rich_text": []},
+        }
+        if NOTION_PROPS["comment1"] in self._db_props:
+            props[NOTION_PROPS["comment1"]] = {"rich_text": []}
+        if NOTION_PROPS["comment2"] in self._db_props:
+            props[NOTION_PROPS["comment2"]] = {"rich_text": []}
+        self.client.pages.update(page_id=page_id, properties=props)
 
     # ── 解析 ──────────────────────────────────────────────────
 
