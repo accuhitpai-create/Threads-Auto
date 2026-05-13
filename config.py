@@ -27,6 +27,7 @@ NOTION_PROPS = {
     "comment2": "留言2",
     "status": "審稿狀態",
     "notes": "備註",
+    "actual_publish_date": "實際發布日期",
 }
 
 # 審稿狀態

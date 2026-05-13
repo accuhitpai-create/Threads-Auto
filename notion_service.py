@@ -14,14 +14,23 @@ class NotionService:
         self.db_id = NOTION_DATABASE_ID
         db = self.client.databases.retrieve(database_id=self.db_id)
         self._db_props = set(db["properties"].keys())
+        self._ensure_actual_publish_date_prop()
+
+    def _ensure_actual_publish_date_prop(self):
+        """若 Notion 資料庫尚無「實際發布日期」欄位，自動新增"""
+        prop_name = NOTION_PROPS["actual_publish_date"]
+        if prop_name not in self._db_props:
+            self.client.databases.update(
+                database_id=self.db_id,
+                properties={prop_name: {"date": {}}}
+            )
+            self._db_props.add(prop_name)
 
     # ── 讀取 ──────────────────────────────────────────────────
 
     def get_approved_posts(self) -> list[dict]:
-        """取得核准發布、今天預定發布、時間已到的貼文"""
-        now_twn = datetime.now(TWN)
-        today = now_twn.date().isoformat()
-        now_time = now_twn.strftime("%H:%M")
+        """取得核准發布、預定發布日已到（含過去積壓）的貼文"""
+        today = datetime.now(TWN).date().isoformat()
 
         response = self.client.databases.query(
             database_id=self.db_id,
@@ -33,18 +42,20 @@ class NotionService:
                     },
                     {
                         "property": NOTION_PROPS["publish_date"],
-                        "date": {"equals": today}
+                        "date": {"on_or_before": today}
                     }
                 ]
-            }
+            },
+            sorts=[
+                {
+                    "property": NOTION_PROPS["publish_date"],
+                    "direction": "ascending"
+                }
+            ],
+            page_size=1,
         )
 
-        posts = []
-        for page in response.get("results", []):
-            parsed = self._parse_page(page)
-            if parsed.get("publish_time", "99:99") <= now_time:
-                posts.append(parsed)
-        return posts
+        return [self._parse_page(p) for p in response.get("results", [])]
 
     def get_needs_revision_posts(self) -> list[dict]:
         """取得標記為需修改的貼文（備註不為空）"""
@@ -195,12 +206,16 @@ class NotionService:
         return paragraphs
 
     def mark_as_published(self, page_id: str):
+        now_iso = datetime.now(TWN).isoformat()
         self.client.pages.update(
             page_id=page_id,
             properties={
                 NOTION_PROPS["status"]: {
                     "select": {"name": STATUS_PUBLISHED}
-                }
+                },
+                NOTION_PROPS["actual_publish_date"]: {
+                    "date": {"start": now_iso}
+                },
             }
         )
 
