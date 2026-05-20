@@ -2,8 +2,7 @@ name: Publish Posts
 
 on:
   schedule:
-    - cron: '0 2 * * *'   # 每天 10:00 TWN (UTC+8)
-    - cron: '30 11 * * *'  # 每天 19:30 TWN (UTC+8)
+    - cron: '30 2 * * 1,3,5'  # 週一、三、五 10:30 TWN (UTC+8)
   workflow_dispatch:        # 允許手動觸發
 
 jobs:
